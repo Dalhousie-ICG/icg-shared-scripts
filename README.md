@@ -1,7 +1,7 @@
-# gospel_of_andrew
+# icg-shared-scripts
 General repository to share code
 
-The general idea of this repository is just to have a central place for members of the Roger Lab to share and collaborate on code. To make it easy for people to find code useful for them, please provide a short description of what each of your scripts can do
+The general idea of this repository is just to have a central place for members of ICG to share and collaborate on code. To make it easy for people to find code useful for them, please provide a short description of what each of your scripts can do
 
 ## Important!
 Make sure that before you push any of your local commits to this repository, do a `git pull` first!! This can prevents all sorts of problems and branch conflicts etc.
@@ -19,7 +19,7 @@ Commonly used perun submission scripts for particular softwares can be found und
 
 `add_intergenic_space_features.py` - Add intergenic space features to a GFF3 file that doesn't already have them explicitly defined
 
-`purge_false_introns.py` - Flag introns with poor RNAseq splicing coverage, remove them and re-predict gene, mRNA, exon, CDS features in regions where the false introns used to be using a simple ORF finder 
+`fix_genes_with_false_introns.py` - Flag introns with poor RNAseq splicing coverage, remove them and re-predict gene, mRNA, exon, CDS features in regions where the false introns used to be using a simple ORF finder 
 
 ## Phylogenetics
 `aa_recoding.pl` - Recode your amino acid coding alignments into Dayhoff4, Dayhoff6, SR4, HP
@@ -70,6 +70,6 @@ Commonly used perun submission scripts for particular softwares can be found und
 
 `calcNARSC.py` - Calculate the mean number of Nitrogen Atoms per Residue Side Chain in a protein FASTA file
 
-`Remove_short_contigs_fasta_files_in_a_fold.py` - Remove short contigs for all fasta_files in a fold
+`Remove_short_contigs_fasta_files_in_a_fold.py` - Remove short contigs for all FASTA files in a fold
 
 `Extract_contigs_left2remains.py` - Extract desired contigs & the rest contigs go to another file
