@@ -44,6 +44,8 @@ Commonly used perun submission scripts for particular softwares can be found und
 
 `TreeFINISHER_ete3_v1-1.py` - (Not finished nor well tested!) Use ETE3 kit to process input newick tree: colour branches by taxonomic group, rename taxa, and output as SVG.
 
+`visualize_compositional_bias.py` - Show absolute or relative amino acid frequencies of taxa of an alignment as barcharts at the tips of a phylogenetic tree
+
 ## Sequencing reads analysis
 `colorFastq.pl` - Print a FASTQ file to your terminal screen, but phred symbols become colored bars
 
