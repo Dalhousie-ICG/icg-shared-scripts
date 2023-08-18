@@ -8,6 +8,8 @@ $ conda create -n <env_name> pyhmmer biopython ete3
 """
 Copyright 2023 Jason Shao & Joran Martijn.
 
+The idea for this script was strongly inspired by an earlier script of Laura Eme.
+
 This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public
 License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later
 version.
