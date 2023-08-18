@@ -46,6 +46,8 @@ Commonly used perun submission scripts for particular softwares can be found und
 
 `visualize_compositional_bias.py` - Show absolute or relative amino acid frequencies of taxa of an alignment as barcharts at the tips of a phylogenetic tree
 
+`visualize_domains.py` - Show protein domains on either aligned or unaligned sequences at the tips of a phylogenetic tree
+
 ## Sequencing reads analysis
 `colorFastq.pl` - Print a FASTQ file to your terminal screen, but phred symbols become colored bars
 
