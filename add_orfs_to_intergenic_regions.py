@@ -27,7 +27,7 @@ import random
 import orfipy_core
 import argparse
 import os, subprocess
-from tqdm import tqdm
+# from tqdm import tqdm
 
 
 # argument parser
