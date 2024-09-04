@@ -1,5 +1,23 @@
 #!/usr/bin/env python
 
+"""
+Copyright 2023 Joran Martijn & Greg Seaton
+
+The development of this and other bioinformatic tools in the Roger lab was funded by
+Discovery grant RGPIN-2022-05430 from the Natural Sciences and Engineering Research Council of Canada
+awarded to Andrew J. Roger.
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public
+License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later
+version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied
+warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with this program.
+If not, see <https://www.gnu.org/licenses/>.
+"""
+
 import gffutils
 import pysam
 from statistics import mean
@@ -66,6 +84,13 @@ parser.add_argument(
         required=False,
         default=200,
         help="Do not consider introns larger than this")
+parser.add_argument(
+        "-l", "--min_orf_length",
+        dest='min_orf_len',
+        type=int,
+        required=False,
+        default=300,
+        help="Do not consider orfs shorter than this")
 args = parser.parse_args()
 
 
@@ -79,7 +104,8 @@ def get_igr_introns(db, intron_db, igrs):
     all_contigs = list( db.seqids() )
     # per contig, compare introns with intergenic regions
     # and select those that are within intergenic regions
-    for contig in tqdm( all_contigs, desc='Parsing contigs for intergenic introns' ):
+    # for contig in tqdm( all_contigs, desc='Parsing contigs for intergenic introns' ):
+    for contig in all_contigs:
         # select igrs and introns in a particular contig
         igrs_c    = (x for x in igrs if x.seqid == contig)
         introns_c = intron_db.region(seqid=contig, start=1)
@@ -119,14 +145,15 @@ def get_true_introns(igr_introns, bamfile):
     '''
     true_introns = []
     # loop over intergenic_region introns
-    for i in tqdm( igr_introns, desc='Getting well supported introns' ):
+    # for i in tqdm( igr_introns, desc='Getting well supported introns' ):
+    for i in igr_introns:
         # start list of spliced / all aligned reads ratio's
         ratios = []
         # i.start and i.end are 1-indexed
         # pysam works with 0-indexing
         # so to get coverage for position x (1-indexed),
         # we need to ask for position x-1 (0-indexed)
-        for col in bamfile.pileup(contig=i.seqid, start=i.start-1, stop=i.end, truncate=True):
+        for col in bamfile.pileup(contig=i.seqid, start=i.start-1, stop=i.end, truncate=True, ignore_orphans=False):
             # skip col if no reads are aligned
             if col.get_num_aligned() == 0:
                 continue
@@ -145,7 +172,7 @@ def get_true_introns(igr_introns, bamfile):
 
         # if ratio > 0.80,
         # intron is most likely true
-        if mean(ratios) > 0.50:
+        if len(ratios) > 0 and mean(ratios) > 0.50:
             i.attributes['ratio'] = f'{mean(ratios):.2f}'
             true_introns.append(i)
     return true_introns
@@ -168,19 +195,29 @@ def get_high_cov_regions(igr, bamfile, wdw_size):
 
             # pysam 0-indexed, so add +1 to make it 1-indexed
             pos = col.reference_pos + 1
-            cov = len( [x for x in col.pileups if s in x.alignment.get_tag('XS')] )
+            # calculate site coverage, but stop iterating
+            # once you have a coverage of 10
+            # this saves a lot of computations
+            cov = 0
+            for x in col.pileups:
+                if s in x.alignment.get_tag('XS'):
+                    cov += 1
+                if cov > 10:
+                    break
+            # cov = len( [x for x in col.pileups if s in x.alignment.get_tag('XS')] )
+            # print(s, pos, ':', cov)
             # cov = col.nsegments
             # cov = get_strand_cov(col, strand)
 
             # if you go from low-cov to high-cov region
-            if switch == False and cov >= 4:
+            if switch == False and cov >= 2:
                 region_start = last_high_cov_pos = pos
                 switch = True
 
             # if you are in a high-cov region and ...
             if switch == True:
                 # ... encounter another high-cov position
-                if cov >= 4:
+                if cov >= 2:
                     # it may be after jumping over a long non-covered region
                     # in that case, yield the region prior to the jump
                     if pos - last_high_cov_pos > wdw_size:
@@ -297,21 +334,21 @@ def get_non_overlapping_orfs(seq, strand):
     seq = seq.upper()
     # convert strand symbol
     if strand == '+':
-        # transform stop motifs into stop codons
-        # (a Blastocyctis specific thing)
-        seq = re.sub(r'([ACTG]*)T[ACTG]{2}([ACTG]{2}TGTTTGTT)', r'\1TAA\2', seq)
+    #     # transform stop motifs into stop codons
+    #     # (a Blastocyctis specific thing)
+    #     seq = re.sub(r'([ACTG]*)T[ACTG]{2}([ACTG]{2}TGTTTGTT)', r'\1TAA\2', seq)
         strand = 'f'
     elif strand == '-':
-        # transform stop motifs into stop codons (reverse direction)
-        # (a Blastocyctis specific thing)
-        seq = re.sub(r'(AACAAACA[ACTG]{2})[ACTG]{2}A', r'\1TTA', seq, count=1)
+    #     # transform stop motifs into stop codons (reverse direction)
+    #     # (a Blastocyctis specific thing)
+    #     seq = re.sub(r'(AACAAACA[ACTG]{2})[ACTG]{2}A', r'\1TTA', seq, count=1)
         strand = 'r'
     # find orfs in seq
     ## orfs() returns a list of tuples
     all_orfs = orfipy_core.orfs(
         seq,
-        minlen=300,
-        maxlen=10000,
+        minlen=args.min_orf_len,
+        maxlen=100000,
         starts=['ATG'],
         strand=strand,
         include_stop=True
@@ -367,11 +404,11 @@ def re_insert_introns_to(orfs, introns, region_start):
                 o[0] += intron_len
                 o[1] += intron_len
             # if junction is within the predicted orf
-            elif o[0] < junction < o[1]:
+            elif o[0] <= junction < o[1]-1:
                 # update only the orf end coord
                 o[1] += intron_len
             # if junction is after the predicted orf
-            elif o[1] < junction:
+            elif o[1]-1 < junction:
                 # move on to the next orf
                 break
         # transform back to genome space
@@ -380,22 +417,7 @@ def re_insert_introns_to(orfs, introns, region_start):
     return upd_orfs
 
 
-def create_new_id(id_list):
-    '''
-    Create a new ID for newly created genes. Since its
-    generated randomly, we need to check if it already exists
-    '''
-    alphabet = 'qwertyuioplkjhgfdsazxcvbnm'.upper()
-    new_id = 'ORF_' + ''.join(random.choices(alphabet, k=6))
-    # check if new_id already exists
-    while True:
-        if new_id in id_list:
-            continue
-        else:
-            return new_id
-
-
-def make_features(region, orfs, introns, new_feature_ids):
+def make_features(region, orfs, introns, new_orf_count):
     '''
     Given a set of new ORFs in a particular region,
     and a set of overlapping introns, create
@@ -406,8 +428,8 @@ def make_features(region, orfs, introns, new_feature_ids):
 
     # convert intron coordinates to genome space
     for i in introns:
-        i.start = i.start + r_start - 1
-        i.end   = i.end   + r_start - 1
+       i.start = i.start + r_start - 1
+       i.end   = i.end   + r_start - 1
 
     # move through orfs-vs-introns to make features
     for o in orfs:
@@ -419,8 +441,11 @@ def make_features(region, orfs, introns, new_feature_ids):
         exon_start = gene_start
         exon_end   = gene_end
         # create new gene id
-        new_gene_id = create_new_id(new_feature_ids)
-        new_feature_ids.append(new_gene_id)
+        # new_gene_id = create_new_id(new_feature_ids)
+        # new_feature_ids.append(new_gene_id)
+        new_gene_name = f'orf_added{new_orf_count:04d}'
+        contig_number = int( r_seqid.split('tig')[1] )
+        new_gene_contig = f'ctg{contig_number:03d}'
         # create Feature obj
         new_gene = gffutils.feature.Feature(
                 seqid = r_seqid,
@@ -431,12 +456,42 @@ def make_features(region, orfs, introns, new_feature_ids):
                 score = '.',
                 strand = gene_strand,
                 frame = '.',
-                attributes = f'ID={new_gene_id}_gene;Name={new_gene_id}_gene'
+                attributes = f'ID={new_gene_contig}.{new_gene_name};Name={new_gene_name}'
                 )
         yield new_gene
 
+        # the mRNA has the same coords as the gene
+        new_mRNA_name = new_gene_name.replace('orf','mRNA')
+        new_mRNA = gffutils.feature.Feature(
+                seqid = r_seqid,
+                source = 'script',
+                featuretype = 'mRNA',
+                start = gene_start,
+                end = gene_end,
+                score = '.',
+                strand = gene_strand,
+                frame = '.',
+                attributes = f'ID={new_gene_contig}.{new_mRNA_name};Parent={new_gene_contig}.{new_gene_name};Name={new_mRNA_name}'
+                )
+        yield new_mRNA
+
         # if the region has no introns
         if len(introns) == 0:
+
+            # the exon also has the same coords as the gene
+            new_exon = gffutils.feature.Feature(
+                    seqid = r_seqid,
+                    source = 'script',
+                    featuretype = 'exon',
+                    start = gene_start,
+                    end = gene_end,
+                    score = '.',
+                    strand = gene_strand,
+                    frame = '.',
+                    attributes = f'ID={new_gene_contig}.{new_mRNA_name}.exon01;Parent={new_gene_contig}.{new_mRNA_name}'
+                    )
+            yield new_exon
+
             # the CDS has the same coords as the gene
             new_cds = gffutils.feature.Feature(
                     seqid = r_seqid,
@@ -447,9 +502,10 @@ def make_features(region, orfs, introns, new_feature_ids):
                     score = '.',
                     strand = gene_strand,
                     frame = str(0),
-                    attributes = f'ID={new_gene_id}_CDS;Parent={new_gene_id}_gene;Name={new_gene_id}_CDS'
+                    attributes = f'ID={new_gene_contig}.{new_mRNA_name}.CDS01;Parent={new_gene_contig}.{new_mRNA_name}'
                     )
             yield new_cds
+
 
         # else if new gene does have introns,
         # CDS feature coords need to be adjusted
@@ -458,6 +514,7 @@ def make_features(region, orfs, introns, new_feature_ids):
             # but adjustment of phase depends on
             # the strand of the gene
             phase = 0
+            m = 1 # exon counter
             if gene_strand == '+':
                 for i in introns:
                     if i.end < gene_start:
@@ -465,6 +522,18 @@ def make_features(region, orfs, introns, new_feature_ids):
                     elif gene_start < i.end < gene_end:
                         cds_start = exon_start
                         cds_end   = i.start - 1
+                        new_exon = gffutils.feature.Feature(
+                                seqid = r_seqid,
+                                source = 'script',
+                                featuretype = 'exon',
+                                start = cds_start,
+                                end = cds_end,
+                                score = '.',
+                                strand = '+',
+                                frame = '.',
+                                attributes = f'ID={new_gene_contig}.{new_mRNA_name}.exon{m:02d};Parent={new_gene_contig}.{new_mRNA_name}'
+                                )
+                        yield new_exon
                         new_cds = gffutils.feature.Feature(
                                 seqid = r_seqid,
                                 source = 'script',
@@ -474,7 +543,88 @@ def make_features(region, orfs, introns, new_feature_ids):
                                 score = '.',
                                 strand = '+',
                                 frame = str(phase),
-                                attributes = f'ID={new_gene_id}_CDS;Parent={new_gene_id}_gene;Name={new_gene_id}_CDS'
+                                attributes = f'ID={new_gene_contig}.{new_mRNA_name}.CDS{m:02d};Parent={new_gene_contig}.{new_mRNA_name}'
+                                )
+                        yield new_cds
+                        new_intron = gffutils.feature.Feature(
+                                seqid = r_seqid,
+                                source = 'script',
+                                featuretype = 'intron',
+                                start = i.start,
+                                end = i.end,
+                                score = '.',
+                                strand = r_strand,
+                                frame = '.',
+                                attributes = f'ID={new_gene_contig}.{new_mRNA_name}.intron{m:02d};Parent={new_gene_contig}.{new_mRNA_name}'
+                                )
+                        yield new_intron
+
+                        # update exon start and phase for the next exon/cds
+                        exon_start = i.end + 1
+                        codon_remainder = ( len(new_cds) - phase ) % 3
+                        phase = possible_phases[codon_remainder]
+                        m += 1
+                    elif gene_end < i.start:
+                        break
+
+                # update the last exon/cds coords
+                cds_start = exon_start
+                cds_end   = gene_end
+                new_exon = gffutils.feature.Feature(
+                        seqid = r_seqid,
+                        source = 'script',
+                        featuretype = 'exon',
+                        start = cds_start,
+                        end = cds_end,
+                        score = '.',
+                        strand = '+',
+                        frame = '.',
+                        attributes = f'ID={new_gene_contig}.{new_mRNA_name}.exon{m:02d};Parent={new_gene_contig}.{new_mRNA_name}'
+                        )
+                yield new_exon
+                new_cds = gffutils.feature.Feature(
+                        seqid = r_seqid,
+                        source = 'script',
+                        featuretype = 'CDS',
+                        start = cds_start,
+                        end = cds_end,
+                        score = '.',
+                        strand = '+',
+                        frame = str(phase),
+                        attributes = f'ID={new_gene_contig}.{new_mRNA_name}.CDS{m:02d};Parent={new_gene_contig}.{new_mRNA_name}'
+                        )
+                yield new_cds
+
+            elif gene_strand == '-':
+                # introns.reverse()
+                for i in introns[::-1]:
+                    if gene_end < i.start:
+                        continue
+                    elif gene_start < i.end < gene_end:
+                        cds_start = i.end + 1
+                        cds_end   = exon_end
+                        new_exon = gffutils.feature.Feature(
+                                seqid = r_seqid,
+                                source = 'script',
+                                featuretype = 'exon',
+                                start = cds_start,
+                                end = cds_end,
+                                score = '.',
+                                strand = '-',
+                                frame = '.',
+                                attributes = f'ID={new_gene_contig}.{new_mRNA_name}.exon{m:02d};Parent={new_gene_contig}.{new_mRNA_name}'
+                                )
+                        yield new_exon
+                        new_cds = gffutils.feature.Feature(
+                                seqid = r_seqid,
+                                source = 'script',
+                                featuretype = 'CDS',
+                                start = cds_start,
+                                end = cds_end,
+                                score = '.',
+                                strand = '-',
+                                frame = str(phase),
+                                attributes = f'ID={new_gene_contig}.{new_mRNA_name}.CDS{m:02d};Parent={new_gene_contig}.{new_mRNA_name}'
                                 )
                         yield new_cds
 
@@ -487,64 +637,34 @@ def make_features(region, orfs, introns, new_feature_ids):
                                 score = '.',
                                 strand = r_strand,
                                 frame = '.',
-                                attributes = f'ID={new_gene_id}_intron;Parent={new_gene_id}_gene;Name={new_gene_id}_intron'
+                                attributes = f'ID={new_gene_contig}.{new_mRNA_name}.intron{m:02d};Parent={new_gene_contig}.{new_mRNA_name}'
                                 )
                         yield new_intron
 
-                        # update exon start and phase for the next exon/cds
-                        exon_start = i.end + 1
-                        codon_remainder = ( len(new_cds) - phase ) % 3
-                        phase = possible_phases[codon_remainder]
-                    elif gene_end < i.start:
-                        break
-
-                # update the last exon/cds coords
-                cds_start = exon_start
-                cds_end   = gene_end
-                new_cds = gffutils.feature.Feature(
-                        seqid = r_seqid,
-                        source = 'script',
-                        featuretype = 'CDS',
-                        start = cds_start,
-                        end = cds_end,
-                        score = '.',
-                        strand = '+',
-                        frame = str(phase),
-                        attributes = f'ID={new_gene_id}_CDS;Parent={new_gene_id}_gene;Name={new_gene_id}_CDS'
-                        )
-                yield new_cds
-
-            elif gene_strand == '-':
-                introns.reverse()
-                for i in introns:
-                    if gene_end < i.start:
-                        continue
-                    elif gene_start < i.end < gene_end:
-                        cds_start = i.end + 1
-                        cds_end   = exon_end
-                        new_cds = gffutils.feature.Feature(
-                                seqid = r_seqid,
-                                source = 'script',
-                                featuretype = 'CDS',
-                                start = cds_start,
-                                end = cds_end,
-                                score = '.',
-                                strand = '-',
-                                frame = str(phase),
-                                attributes = f'ID={new_gene_id}_CDS;Parent={new_gene_id}_gene;Name={new_gene_id}_CDS'
-                                )
-                        yield new_cds
                         # update exon_end and phase for next exon/cds
                         exon_end = i.start - 1
                         codon_remainder = ( len(new_cds) - phase ) % 3
                         phase = possible_phases[codon_remainder]
+                        m += 1
                     elif i.end < gene_start:
-                        introns.reverse()
+                        # introns.reverse()
                         break
 
                 # update the last exon/cds coords
                 cds_start = gene_start
                 cds_end   = exon_end
+                new_exon = gffutils.feature.Feature(
+                        seqid = r_seqid,
+                        source = 'script',
+                        featuretype = 'exon',
+                        start = cds_start,
+                        end = cds_end,
+                        score = '.',
+                        strand = '-',
+                        frame = '.',
+                        attributes = f'ID={new_gene_contig}.{new_mRNA_name}.exon{m:02d};Parent={new_gene_contig}.{new_mRNA_name}'
+                        )
+                yield new_exon
                 new_cds = gffutils.feature.Feature(
                         seqid = r_seqid,
                         source = 'script',
@@ -554,22 +674,28 @@ def make_features(region, orfs, introns, new_feature_ids):
                         score = '.',
                         strand = '-',
                         frame = str(phase),
-                        attributes = f'ID={new_gene_id}_CDS;Parent={new_gene_id}_gene;Name={new_gene_id}_CDS'
+                        attributes = f'ID={new_gene_contig}.{new_mRNA_name}.CDS{m:02d};Parent={new_gene_contig}.{new_mRNA_name}'
                         )
                 yield new_cds
+
+        # update orf count for each new orf in the igr
+        new_orf_count += 1
 
 
 # run bam2hints and filterIntronsFindStrand.pl if their output doesn't exist already
 if not os.path.exists('scored_intron_hints.gff'):
+    # print("Generating hints file")
     # run bam2hints
     subprocess.run(["bam2hints", "--intronsonly", f"--minintronlen={args.min_intron_len}", f"--in={args.bam_file}", "--out=intron_hints.gff"])
     # run filterIntronsFindStrand.pl and select introns with score 5 or higher
-    cmd = "filterIntronsFindStrand.pl " + args.fasta + " intron_hints.gff --score --allowed=gtag,gcag,atac,atag,gaag | awk \'$6 >= 5 {print $0}\' > scored_intron_hints.gff"
+    cmd = "filterIntronsFindStrand.pl " + args.fasta_file + " intron_hints.gff --score --allowed=gtag,gcag,atac,atag,gaag | awk \'$6 >= 5 {print $0}\' > scored_intron_hints.gff"
     # cmd = f'filterIntronsFindStrand.pl {args.fasta_file} intron_hints.gff --score --allowed=gtag,gcag,atac,atag,gaag | awk "$6 >= 5 {print $0}" > scored_intron_hints.gff'
     subprocess.run([cmd], shell=True)
+    # print("Hints file complete")
 
-
-# load gff file with intergenic regions explicitly defined
+# load gff file
+## intergenic regions do not necessarily have to be explicitly defined
+## this script will infer them if they are not defined already
 db = gffutils.create_db(args.gff3_file, ':memory:', merge_strategy='create_unique')
 
 # load intron gff file
@@ -579,7 +705,7 @@ intron_db = gffutils.create_db('scored_intron_hints.gff', ':memory:')
 bamfile = pysam.AlignmentFile(args.bam_file, mode='rb')
 
 # get all gene features
-genes = db.features_of_type('gene')
+genes = db.features_of_type('gene', order_by=('seqid','start') )
 # infer intergenic_region features
 igrs  = list( db.interfeatures(genes, new_featuretype='intergenic_region') )
 
@@ -595,9 +721,10 @@ true_introns = get_true_introns(sized_introns, bamfile)
 fasta = SeqIO.index(args.fasta_file, 'fasta')
 
 # main code
-new_feature_id_list = []
-for igr in tqdm( igrs, desc='Parsing intergenic regions' ):
-    if len(igr) < 350:
+# new_feature_id_list = []
+new_gene_count = 1
+for igr in igrs:
+    if len(igr) < 500:
         continue
 
     contig = fasta[igr.seqid].seq
@@ -610,20 +737,23 @@ for igr in tqdm( igrs, desc='Parsing intergenic regions' ):
         r_seqid, r_start, r_stop, r_strand, _ = r
         if r_stop - r_start < 300:
             continue
+        # print()
         # print(f'high_cov_region: {r}')
         r_introns = list( get_introns_of(r, true_introns) )
         r_n_introns = list( select_non_overlapping_introns(r_introns) )
         r_seq = str( contig[ r_start-1:r_stop ] )
         r_spliced_seq = splice_seq(r_seq, r_n_introns)
+        # print(r_spliced_seq)
         r_orfs = list( get_non_overlapping_orfs(r_spliced_seq, r_strand) )
+        # print(r_orfs)
         if len(r_orfs) == 0:
             continue
         r_upd_orfs = re_insert_introns_to(r_orfs, r_n_introns, r_start)
-        r_new_features = make_features(r, r_upd_orfs, r_n_introns, new_feature_id_list)
+        # print(r_upd_orfs)
+        # r_new_features = make_features(r, r_upd_orfs, r_n_introns, new_feature_id_list)
+        r_new_features = list( make_features(r, r_upd_orfs, r_n_introns, new_gene_count) )
+        new_gene_count += len( [f for f in r_new_features if f.featuretype=='gene'] ) 
         db.update(r_new_features, merge_strategy='create_unique')
-        # for f in r_new_features:
-        # #     print('new feature: ', f)
-        #     pass
 
 # print(db.directives)
 # print directives/pragmas
@@ -638,12 +768,13 @@ print(
     f' --window_size {args.wdw_size}'
     f' --min_intron_length {args.min_intron_len}'
     f' --max_intron_length {args.max_intron_len}'
+    f' --min_orf_length {args.min_orf_len}'
 )
 
 # print updated gff record in logical order
-for f in db.all_features(order_by=('seqid','start','featuretype'), reverse=True):
-    if f.featuretype == 'gene':
-        print()
+for g in db.features_of_type('gene', order_by=('seqid', 'start')):
+    print()
+    print(g)
+    for f in db.children(g, order_by='start'):
         print(f)
-    else:
-        print(f)
+
