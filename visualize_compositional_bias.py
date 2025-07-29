@@ -2,6 +2,10 @@
 """
 Copyright 2023 Jason Shao & Joran Martijn.
 
+The development of this and other bioinformatic tools in the Roger lab was funded by
+Discovery grant RGPIN-2022-05430 from the Natural Sciences and Engineering Research Council of Canada
+awarded to Andrew J. Roger.
+
 This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public
 License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later
 version.
@@ -13,6 +17,8 @@ You should have received a copy of the GNU General Public License along with thi
 If not, see <https://www.gnu.org/licenses/>.
 
 -----------------------------------------------------------------------------------------------------------------------
+Install required packages with conda:
+$ conda create -n <env_name> biopython ete3
 
 This program creates a simple unrooted tree from a newick string, makes BarChartFace for each leaf node in layout and
 render said tree to a PNG image.
