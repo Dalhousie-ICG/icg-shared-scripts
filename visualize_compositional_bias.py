@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+
 """
 Copyright 2023 Jason Shao & Joran Martijn.
 
@@ -32,12 +33,18 @@ optional arguments: -o or --output, desired name for output file, defaults to "t
                     -g or --outgroup_reps, chosen outgroup(s) for rooting
                     -c or --show_chi2_score, whether to display chi-square score
 """
+
+# standard modules
 import argparse
 import sys
 import os
-from Bio import SeqIO
-from ete3 import Tree, faces, TreeStyle, BarChartFace, TextFace
 
+# stuff you need to install
+from Bio import SeqIO
+from ete3 import Tree, TreeNode, faces, TreeStyle, BarChartFace, TextFace
+
+# for type hinting
+from typing import List, Dict
 
 # This class implements a holder for taxon attributes:
 # name, seq, amino acid content, percentages, and the ability to calculate said attributes.
@@ -98,6 +105,7 @@ class Taxon:
         self.chi_square_score = round(chi_square_score, 1)
 
 
+
 # check if subset is in the right format and if it contains valid amino acids
 def validate_subsets(subset):
     subsets = [aa_group.upper() for aa_group in subset.split(",")]
@@ -145,48 +153,52 @@ def layout(node):
         return
 
     # retrieve Taxon from memory
-    taxon = taxa_dict[node.name]
-    dict_list = taxon.display_freqs
+    taxon: Taxon = taxa_dict[node.name]
 
+    # iterate over columns right of tree to which to draw Faces into
     i = 1
-    for freq_dict in dict_list:
-        face = get_barchart_face(freq_dict, taxon.display_max_value)
+    # taxon.display_freqs: List[Dict[str,float]]
+    # aa_freqs: Dict[str,float]
+    for aa_freqs in taxon.display_freqs:
+        face: BarChartFace = get_barchart_face(aa_freqs, taxon.display_max_value)
 
         # all faces have empty labels except for the bottom row
-        root_node = node.get_tree_root()
+        root_node: TreeNode = node.get_tree_root()
         if node.name == root_node.get_leaf_names()[-1]:
-            face.labels = list(freq_dict.keys())
+            face.labels: List[str] = list(aa_freqs.keys())
+            # face.margin_bottom = 50
 
         # ensure a healthy amount of space between the tree and the faces
         if i == 1:
             face.margin_left = 50
         face.margin_right = 10  # same for between faces
 
-        # all faces have no scale except for the right-most column
-        if len(freq_dict) > 1 and i != len(dict_list):
-            face.scale_fsize = 1
+        # # force all faces except the right-most column to not have a scale
+        # ## len(taxon.display_freqs) returns the number of aa subsets
+        # if len(aa_freqs) > 1 and i != len(taxon.display_freqs):
+        #     face.scale_fsize = 1
 
         faces.add_face_to_node(face=face, node=node, column=i, position="aligned")
         i += 1
 
-    # display chi-square scores if specified
+    # display chi-square scores in the last column if specified
     if taxon.chi_square_score != 0:
         text_face = TextFace(taxon.chi_square_score)
         text_face.margin_left = 50
         faces.add_face_to_node(face=text_face, node=node, column=i, position="aligned")
 
 
-def get_barchart_face(freq_dict, max_value):
+def get_barchart_face(freq_dict, max_value) -> BarChartFace:
     face = BarChartFace(
         values=[abs(x) for x in freq_dict.values()],
         labels=[" " for x in freq_dict.keys()],
         label_fsize=9,  # this value dictates scaling if bar widths are uniform
+        scale_fsize=2,  # this value seems to dictate the scaling of the y-axis labels
         colors=["blue" if f > 0 else "red" for f in freq_dict.values()],
         width=40,  # when below a certain threshold, all the bar widths are scaled to be uniform
-        height=50,
+        height=80,
         max_value=max_value,
     )
-
     return face
 
 
@@ -237,17 +249,16 @@ def main(args):
 
     tree = Tree(args.tree, format=1)
     leaves = tree.get_leaf_names()
-    outfile = args.output + ".png"
+    # outfile = args.output + ".png"
+    outfile = args.output
 
     #  check if outgroup(s) is specified
     if args.outgroup_reps is not None:
-
         try:
             outgroup_reps = validate_outgroup(args.outgroup_reps, leaves)
         except argparse.ArgumentTypeError as e:
             print(e)
             sys.exit()
-
         tree = root(tree, outgroup_reps)
 
     frequency_type = args.frequency_type
@@ -278,7 +289,7 @@ def main(args):
             # scenario 2: no subsets, relative frequencies
             if frequency_type == "relative":
                 taxon.set_all_relative_freq(avg_freq_dict)
-                taxon.display_max_value = 0.05
+                taxon.display_max_value = 0.1
 
         else:
             # scenario 3: subsets, absolute frequencies
@@ -287,7 +298,7 @@ def main(args):
             # scenario 4: subsets, relative frequencies
             if frequency_type == "relative":
                 taxon.set_subset_relative_freq(subsets, avg_freq_dict)
-                taxon.display_max_value = 0.05
+                taxon.display_max_value = 0.1
 
         if show_chi2_score is True:
             taxon.calculate_chi_square(avg_freq_dict)
@@ -300,7 +311,8 @@ def main(args):
     # render tree
     tree.render(
         file_name=outfile,
-        units="px", h=200 * len(leaves),
+        units="px",
+        h=200 * len(leaves),
         tree_style=tree_style,
         layout=layout
     )
@@ -318,16 +330,34 @@ if __name__ == "__main__":
     all_amino_acids = "ACDEFGHIKLMNPQRSTVWY"
 
     # specify options, disable for debugging
-    parser = argparse.ArgumentParser(description="Tree making")
+    parser = argparse.ArgumentParser(
+        description='''
+        Takes an alignment and a corresponding tree file,
+        and generates an image file that shows the tree,
+        and per-taxon amino acid compositions expressed in a barchart
+        to the right of this tree.
+
+        Optionally can show the per-taxon chi-square scores as well.
+
+        It's possible to break up the barchart into amino acid subsets.
+
+        NOTE: With a large tree (with many taxa), if you output to PNG,
+        the image may get clipped in the bottom.
+
+        NOTE: If you output to PDF, the amino acid labels in the bottom
+        can get smudged out
+        '''
+    )
 
     parser.add_argument("-t", "--tree", required=True)
     parser.add_argument("-n", "--file", required=True)
-    parser.add_argument("-f", "--format", required=True)
-    parser.add_argument("-o", "--output", type=str, default="tree")
+    parser.add_argument("-f", "--format", required=True, help="Format of input alignment file (fasta, phylip, etc)")
+    parser.add_argument("-o", "--output", type=str, default="tree.png", help="Name of output file. Extension (png, pdf, svg, etc) determine image type")
     parser.add_argument("-s", "--subsets", type=validate_subsets, nargs="?")
-    parser.add_argument("-m", "--frequency_type", type=validate_frequency, default="absolute")
+    parser.add_argument("-m", "--frequency_type", type=validate_frequency, default="absolute", help="'absolute' or 'relative'")
     parser.add_argument("-g", "--outgroup_reps", type=str, nargs="?")
-    parser.add_argument("-c", "--show_chi2_score", type=bool, default=False)
+    # parser.add_argument("-c", "--show_chi2_score", type=bool, default=False)
+    parser.add_argument("-c", "--show_chi2_score", action='store_true')
 
     taxa_dict = None
 
